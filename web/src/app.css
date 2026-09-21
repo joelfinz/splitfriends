@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: emerald --default, dim --prefersdark;
+}
+
+html, body {
+  height: 100%;
+}
+body {
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

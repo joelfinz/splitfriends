@@ -1,0 +1,10 @@
+.git
+data
+*.db
+*.db-*
+web/node_modules
+web/dist
+docs
+deploy.sh
+README.md
+.DS_Store
