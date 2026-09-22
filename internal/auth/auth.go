@@ -36,6 +36,7 @@ type Service struct {
 
 	mu         sync.Mutex
 	challenges map[string]pending
+	touched    map[string]time.Time // session id -> last touch
 }
 
 // pending is the state between a begin and a finish call.
@@ -71,7 +72,7 @@ func New(d *db.DB, rpID, appName string, origins []string) (*Service, error) {
 			secure = true
 		}
 	}
-	s := &Service{db: d, wa: wa, secure: secure, challenges: map[string]pending{}}
+	s := &Service{db: d, wa: wa, secure: secure, challenges: map[string]pending{}, touched: map[string]time.Time{}}
 	go s.sweep()
 	return s, nil
 }
@@ -83,6 +84,11 @@ func (s *Service) sweep() {
 		for k, p := range s.challenges {
 			if now.After(p.expires) {
 				delete(s.challenges, k)
+			}
+		}
+		for k, t := range s.touched {
+			if now.Sub(t) > time.Hour {
+				delete(s.touched, k)
 			}
 		}
 		s.mu.Unlock()
@@ -177,10 +183,41 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 			if u, err := store.UserBySession(r.Context(), s.db, c.Value); err == nil {
 				r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, u))
+				s.touch(r, c.Value)
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+const touchInterval = 5 * time.Minute
+
+// touch records last-seen/IP/user agent for a session, throttled per session.
+func (s *Service) touch(r *http.Request, sid string) {
+	now := time.Now()
+	s.mu.Lock()
+	last, ok := s.touched[sid]
+	if ok && now.Sub(last) < touchInterval {
+		s.mu.Unlock()
+		return
+	}
+	s.touched[sid] = now
+	s.mu.Unlock()
+	_ = store.TouchSession(r.Context(), s.db, sid, store.IPFrom(r.Context()), ua(r))
+}
+
+func ua(r *http.Request) string {
+	u := r.UserAgent()
+	if len(u) > 300 {
+		u = u[:300]
+	}
+	return u
+}
+
+func (s *Service) audit(r *http.Request, userID, kind, detail string) {
+	if err := store.Audit(r.Context(), s.db, userID, kind, detail, store.IPFrom(r.Context()), ua(r)); err != nil {
+		slog.Warn("audit", "err", err)
+	}
 }
 
 func Require(next http.Handler) http.Handler {
@@ -272,13 +309,14 @@ func (s *Service) RegisterFinish(w http.ResponseWriter, r *http.Request) {
 		if err := store.InsertCredential(r.Context(), tx, store.Credential{ID: credID(cred), UserID: user.ID, Name: "First passkey", Data: data}); err != nil {
 			return err
 		}
-		sid, err = store.CreateSession(r.Context(), tx, user.ID)
+		sid, err = store.CreateSession(r.Context(), tx, user.ID, store.IPFrom(r.Context()), ua(r))
 		return err
 	})
 	if err != nil {
 		httpx.Internal(w, err)
 		return
 	}
+	s.audit(r, user.ID, store.AuditRegister, "")
 	s.setSession(w, sid)
 	httpx.JSON(w, 200, user)
 }
@@ -322,13 +360,14 @@ func (s *Service) LoginFinish(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		var err error
-		sid, err = store.CreateSession(ctx, tx, matched.UserID)
+		sid, err = store.CreateSession(ctx, tx, matched.UserID, store.IPFrom(ctx), ua(r))
 		return err
 	})
 	if err != nil {
 		httpx.Internal(w, err)
 		return
 	}
+	s.audit(r, matched.UserID, store.AuditLogin, "passkey "+matched.Name)
 	s.setSession(w, sid)
 	httpx.JSON(w, 200, user.(waUser).user)
 }
@@ -336,6 +375,9 @@ func (s *Service) LoginFinish(w http.ResponseWriter, r *http.Request) {
 func (s *Service) Logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = store.DeleteSession(r.Context(), s.db, c.Value)
+		if u, ok := UserFrom(r.Context()); ok {
+			s.audit(r, u.ID, store.AuditLogout, "")
+		}
 	}
 	s.clearSession(w)
 	w.WriteHeader(http.StatusNoContent)
@@ -408,6 +450,7 @@ func (s *Service) AddPasskeyFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, err)
 		return
 	}
+	s.audit(r, u.ID, store.AuditPasskeyAdded, p.name)
 	httpx.JSON(w, 201, c)
 }
 
@@ -430,5 +473,6 @@ func (s *Service) DeletePasskey(w http.ResponseWriter, r *http.Request, id strin
 		httpx.Internal(w, err)
 		return
 	}
+	s.audit(r, u.ID, store.AuditPasskeyRemoved, id)
 	w.WriteHeader(http.StatusNoContent)
 }

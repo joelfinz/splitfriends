@@ -3,9 +3,12 @@
   import { toMinor, toMajor, step, fmt } from '../lib/money';
   import { navigate } from '../lib/router.svelte';
   import { loadGroup, memberName, removeGroupLocal, store, upsertGroupLocal } from '../lib/store.svelte';
-  import { errorToast, toast } from '../lib/toast.svelte';
-  import type { Debt, Expense, GroupDetail, Invite } from '../lib/types';
+  import { actionToast, errorToast, toast } from '../lib/toast.svelte';
+  import { ApiError } from '../lib/api';
+  import { categoryInfo } from '../lib/categories';
+  import type { Debt, Expense, GroupDetail, Invite, Payment, Trash } from '../lib/types';
   import Shell from '../components/Shell.svelte';
+  import StatsTab from '../components/StatsTab.svelte';
   import Spinner from '../components/Spinner.svelte';
   import Money from '../components/Money.svelte';
   import Avatar from '../components/Avatar.svelte';
@@ -13,9 +16,9 @@
 
   let { id, tab: initialTab = 'expenses' }: { id: string; tab?: string } = $props();
 
-  type Tab = 'expenses' | 'balances' | 'settle';
+  type Tab = 'expenses' | 'balances' | 'settle' | 'stats';
   // svelte-ignore state_referenced_locally
-  let tab = $state<Tab>((['expenses', 'balances', 'settle'].includes(initialTab) ? initialTab : 'expenses') as Tab);
+  let tab = $state<Tab>((['expenses', 'balances', 'settle', 'stats'].includes(initialTab) ? initialTab : 'expenses') as Tab);
   let loadError = $state('');
   let simplified = $state(true);
 
@@ -170,8 +173,11 @@
     if (!payValid) return;
     payBusy = true;
     try {
-      await api.createPayment(id, { from_user_id: payFrom, to_user_id: payTo, amount: payMinor, date: payDate, notes: payNotes.trim() });
-      toast('Payment recorded', 'success');
+      const p = await api.createPayment(id, { from_user_id: payFrom, to_user_id: payTo, amount: payMinor, date: payDate, notes: payNotes.trim() });
+      actionToast(`Recorded ${fmt(p.amount, currency)} payment`, 'Undo', async () => {
+        await api.deletePayment(id, p.id);
+        await loadGroup(id);
+      });
       payAmount = '';
       payNotes = '';
       await loadGroup(id);
@@ -182,14 +188,64 @@
       payBusy = false;
     }
   }
-  async function deletePayment(pid: string) {
+  async function deletePayment(p: Payment) {
     if (!confirm('Delete this payment?')) return;
     try {
-      await api.deletePayment(id, pid);
+      await api.deletePayment(id, p.id);
+      actionToast(`Deleted ${fmt(p.amount, currency)} payment`, 'Undo', async () => {
+        await api.restorePayment(id, p.id);
+        await loadGroup(id);
+      });
       await loadGroup(id);
     } catch (e) {
       errorToast(e);
     }
+  }
+
+  // ---- recently deleted
+  let trash = $state<Trash | null>(null);
+  let trashBusy = $state(false);
+  let trashOpen = $state(false);
+  async function loadTrash() {
+    trashBusy = true;
+    try {
+      trash = await api.getTrash(id);
+    } catch (e) {
+      errorToast(e);
+    } finally {
+      trashBusy = false;
+    }
+  }
+  function toggleTrash() {
+    trashOpen = !trashOpen;
+    if (trashOpen && !trash) void loadTrash();
+  }
+  async function restore(kind: 'expense' | 'payment', itemId: string) {
+    try {
+      if (kind === 'expense') await api.restoreExpense(id, itemId);
+      else await api.restorePayment(id, itemId);
+      if (trash) {
+        trash = {
+          expenses: trash.expenses.filter((e) => e.id !== itemId),
+          payments: trash.payments.filter((p) => p.id !== itemId),
+        };
+      }
+      toast('Restored', 'success');
+      await loadGroup(id);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'not_member') toast('Someone on this expense has left the group, so it cannot be restored.', 'error', 5000);
+      else errorToast(e);
+    }
+  }
+  function ago(iso: string): string {
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.round(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m} min ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h} h ago`;
+    const d = Math.round(h / 24);
+    return d === 1 ? 'yesterday' : `${d} days ago`;
   }
 
   const debts = $derived(detail ? (simplified ? detail.simplified : detail.pairwise) : []);
@@ -242,6 +298,7 @@
         <button role="tab" class="tab flex-1 {tab === 'expenses' ? 'tab-active' : ''}" onclick={() => (tab = 'expenses')}>Expenses</button>
         <button role="tab" class="tab flex-1 {tab === 'balances' ? 'tab-active' : ''}" onclick={() => (tab = 'balances')}>Balances</button>
         <button role="tab" class="tab flex-1 {tab === 'settle' ? 'tab-active' : ''}" onclick={() => (tab = 'settle')}>Settle up</button>
+        <button role="tab" class="tab flex-1 {tab === 'stats' ? 'tab-active' : ''}" onclick={() => (tab = 'stats')}>Stats</button>
       </div>
 
       {#if !detail}
@@ -259,11 +316,14 @@
                 {#each m.rows as row (row.kind === 'expense' ? 'e' + row.e.id : 'p' + row.p.id)}
                   {#if row.kind === 'expense'}
                     {@const mine = myShare(row.e)}
+                    {@const cat = categoryInfo(row.e.category)}
                     <li class="list-row items-center">
-                      <div class="w-10 text-center text-xs leading-tight opacity-60">{dayOf(row.e.date)}</div>
+                      <a href={`/groups/${id}/expenses/${row.e.id}/edit`} class="grid size-10 place-items-center rounded-box bg-base-200 text-lg" title={cat.label} aria-label={cat.label}>
+                        <span aria-hidden="true">{cat.emoji}</span>
+                      </a>
                       <a href={`/groups/${id}/expenses/${row.e.id}/edit`} class="min-w-0">
                         <div class="truncate font-medium">{row.e.description}</div>
-                        <div class="truncate text-xs opacity-60">{payerLabel(row.e)} paid {fmt(row.e.amount, currency)}</div>
+                        <div class="truncate text-xs opacity-60">{dayOf(row.e.date)} · {payerLabel(row.e)} paid {fmt(row.e.amount, currency)}</div>
                       </a>
                       <a href={`/groups/${id}/expenses/${row.e.id}/edit`} class="text-right">
                         {#if !involved(row.e)}
@@ -278,17 +338,17 @@
                     </li>
                   {:else}
                     <li class="list-row items-center">
-                      <div class="w-10 text-center text-xs leading-tight opacity-60">{dayOf(row.p.date)}</div>
+                      <div class="grid size-10 place-items-center rounded-box bg-base-200 text-lg" title="Payment" aria-label="Payment"><span aria-hidden="true">💸</span></div>
                       <div class="min-w-0">
                         <div class="truncate text-sm">
                           <span class="font-medium">{memberName(group, row.p.from_user_id)}</span> paid
                           <span class="font-medium">{memberName(group, row.p.to_user_id)}</span>
                         </div>
-                        <div class="text-xs opacity-60">Payment{row.p.notes ? ` · ${row.p.notes}` : ''}</div>
+                        <div class="truncate text-xs opacity-60">{dayOf(row.p.date)} · Payment{row.p.notes ? ` · ${row.p.notes}` : ''}</div>
                       </div>
                       <div class="flex items-center gap-1">
                         <Money amount={row.p.amount} currency={currency} class="text-sm font-semibold" />
-                        <button class="btn btn-ghost btn-xs btn-square" aria-label="Delete payment" onclick={() => deletePayment(row.p.id)}>✕</button>
+                        <button class="btn btn-ghost btn-xs btn-square" aria-label="Delete payment" onclick={() => deletePayment(row.p)}>✕</button>
                       </div>
                     </li>
                   {/if}
@@ -348,6 +408,8 @@
             {/each}
           </ul>
         {/if}
+      {:else if tab === 'stats'}
+        <StatsTab {detail} {myId} />
       {:else}
         <!-- settle up -->
         {#if detail.simplified.length}
@@ -466,6 +528,42 @@
             </li>
           {/each}
         </ul>
+
+        <div class="collapse collapse-arrow mt-4 border border-base-300 bg-base-200/40">
+          <input type="checkbox" checked={trashOpen} onchange={toggleTrash} aria-label="Recently deleted" />
+          <div class="collapse-title text-xs font-semibold uppercase tracking-wide opacity-60">Recently deleted</div>
+          <div class="collapse-content px-0">
+            {#if trashBusy && !trash}
+              <div class="py-2 text-center"><span class="loading loading-spinner loading-sm"></span></div>
+            {:else if trash && trash.expenses.length === 0 && trash.payments.length === 0}
+              <p class="px-4 pb-2 text-sm opacity-60">Nothing here. Deleted expenses and payments can be restored from this list.</p>
+            {:else if trash}
+              <ul class="list">
+                {#each trash.expenses as e (e.id)}
+                  {@const cat = categoryInfo(e.category)}
+                  <li class="list-row items-center py-2">
+                    <div class="grid size-9 place-items-center rounded-box bg-base-200" title={cat.label}><span aria-hidden="true">{cat.emoji}</span></div>
+                    <div class="min-w-0">
+                      <div class="truncate text-sm font-medium">{e.description}</div>
+                      <div class="truncate text-xs opacity-60">{fmt(e.amount, currency)} · {dayOf(e.date)}{e.deleted_at ? ` · deleted ${ago(e.deleted_at)}` : ''}</div>
+                    </div>
+                    <button class="btn btn-sm btn-soft" onclick={() => restore('expense', e.id)}>Restore</button>
+                  </li>
+                {/each}
+                {#each trash.payments as p (p.id)}
+                  <li class="list-row items-center py-2">
+                    <div class="grid size-9 place-items-center rounded-box bg-base-200" title="Payment"><span aria-hidden="true">💸</span></div>
+                    <div class="min-w-0">
+                      <div class="truncate text-sm font-medium">{memberName(group, p.from_user_id)} paid {memberName(group, p.to_user_id)}</div>
+                      <div class="truncate text-xs opacity-60">{fmt(p.amount, currency)} · {dayOf(p.date)}{p.deleted_at ? ` · deleted ${ago(p.deleted_at)}` : ''}</div>
+                    </div>
+                    <button class="btn btn-sm btn-soft" onclick={() => restore('payment', p.id)}>Restore</button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </div>
 
         <div class="modal-action justify-between">
           <button class="btn btn-error btn-soft" disabled={leaveBusy} onclick={leave}>

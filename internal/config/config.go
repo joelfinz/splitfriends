@@ -15,6 +15,9 @@ type Config struct {
 	AppName   string
 	PushEmail string // VAPID subscriber contact, "mailto:..."
 	Dev       bool
+
+	AdminPassword     string // empty disables /admin entirely
+	TrustProxyHeaders bool   // read client IP from CF-Connecting-IP / X-Forwarded-For
 }
 
 func Load() Config {
@@ -26,6 +29,9 @@ func Load() Config {
 		AppName:   env("APP_NAME", "Fairshare"),
 		PushEmail: env("PUSH_CONTACT", "mailto:admin@example.com"),
 		Dev:       env("DEV", "") != "",
+
+		AdminPassword:     os.Getenv("ADMIN_PASSWORD"),
+		TrustProxyHeaders: isTrue(env("TRUST_PROXY_HEADERS", "")),
 	}
 	// ORIGIN may be a comma separated list; the first is the canonical one used in invite URLs.
 	for _, o := range strings.Split(c.Origin, ",") {
@@ -35,6 +41,14 @@ func Load() Config {
 	}
 	c.Origin = c.Origins[0]
 	return c
+}
+
+func isTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func env(k, def string) string {

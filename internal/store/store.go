@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"splitfriends/internal/db"
@@ -111,12 +112,18 @@ func DeleteCredential(ctx context.Context, q Q, userID, id string) error {
 
 const SessionTTL = 90 * 24 * time.Hour
 
-func CreateSession(ctx context.Context, q Q, userID string) (string, error) {
+func CreateSession(ctx context.Context, q Q, userID, ip, userAgent string) (string, error) {
 	id := db.NewToken()
-	now := time.Now().UTC()
-	_, err := q.ExecContext(ctx, `INSERT INTO sessions(id,user_id,created_at,expires_at) VALUES(?,?,?,?)`,
-		id, userID, now.Format(time.RFC3339), now.Add(SessionTTL).Format(time.RFC3339))
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := q.ExecContext(ctx, `INSERT INTO sessions(id,user_id,created_at,expires_at,ip,user_agent,last_seen_at) VALUES(?,?,?,?,?,?,?)`,
+		id, userID, now, time.Now().UTC().Add(SessionTTL).Format(time.RFC3339), ip, userAgent, now)
 	return id, err
+}
+
+// TouchSession records the latest IP/user agent and last-seen time.
+func TouchSession(ctx context.Context, q Q, sid, ip, userAgent string) error {
+	_, err := q.ExecContext(ctx, `UPDATE sessions SET ip=?, user_agent=?, last_seen_at=? WHERE id=?`, ip, userAgent, db.Now(), sid)
+	return err
 }
 
 // UserBySession returns the user for a live session, or ErrNotFound.
@@ -309,16 +316,16 @@ func GetInvite(ctx context.Context, q Q, token string) (Invite, error) {
 // ---- expenses ----
 
 func InsertExpense(ctx context.Context, q Q, e ledger.Expense) error {
-	if _, err := q.ExecContext(ctx, `INSERT INTO expenses(id,group_id,description,amount,date,split_type,notes,created_by,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, e.ID, e.GroupID, e.Description, e.Amount, e.Date, e.SplitType, e.Notes, e.CreatedBy, e.CreatedAt, e.UpdatedAt); err != nil {
+	if _, err := q.ExecContext(ctx, `INSERT INTO expenses(id,group_id,description,amount,date,split_type,category,notes,created_by,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.GroupID, e.Description, e.Amount, e.Date, e.SplitType, e.Category, e.Notes, e.CreatedBy, e.CreatedAt, e.UpdatedAt); err != nil {
 		return err
 	}
 	return writeExpenseLines(ctx, q, e)
 }
 
 func UpdateExpense(ctx context.Context, q Q, e ledger.Expense) error {
-	if _, err := q.ExecContext(ctx, `UPDATE expenses SET description=?,amount=?,date=?,split_type=?,notes=?,updated_at=? WHERE id=?`,
-		e.Description, e.Amount, e.Date, e.SplitType, e.Notes, e.UpdatedAt, e.ID); err != nil {
+	if _, err := q.ExecContext(ctx, `UPDATE expenses SET description=?,amount=?,date=?,split_type=?,category=?,notes=?,updated_at=? WHERE id=?`,
+		e.Description, e.Amount, e.Date, e.SplitType, e.Category, e.Notes, e.UpdatedAt, e.ID); err != nil {
 		return err
 	}
 	if _, err := q.ExecContext(ctx, `DELETE FROM expense_payers WHERE expense_id=?`, e.ID); err != nil {
@@ -349,6 +356,36 @@ func SoftDeleteExpense(ctx context.Context, q Q, id string) error {
 	return err
 }
 
+// GetDeletedExpense returns a soft-deleted expense (for restore).
+func GetDeletedExpense(ctx context.Context, q Q, groupID, id string) (ledger.Expense, error) {
+	list, err := queryExpenses(ctx, q, `WHERE e.group_id=? AND e.id=? AND e.deleted_at IS NOT NULL`, groupID, id)
+	if err != nil {
+		return ledger.Expense{}, err
+	}
+	if len(list) == 0 {
+		return ledger.Expense{}, ErrNotFound
+	}
+	return list[0], nil
+}
+
+func RestoreExpense(ctx context.Context, q Q, id string) error {
+	_, err := q.ExecContext(ctx, `UPDATE expenses SET deleted_at=NULL, updated_at=? WHERE id=?`, db.Now(), id)
+	return err
+}
+
+// DeletedExpenses lists the trash, newest deletion first.
+func DeletedExpenses(ctx context.Context, q Q, groupID string, limit int) ([]ledger.Expense, error) {
+	list, err := queryExpenses(ctx, q, `WHERE e.group_id=? AND e.deleted_at IS NOT NULL`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].DeletedAt > list[j].DeletedAt })
+	if len(list) > limit {
+		list = list[:limit]
+	}
+	return list, nil
+}
+
 func GetExpense(ctx context.Context, q Q, groupID, id string) (ledger.Expense, error) {
 	list, err := queryExpenses(ctx, q, `WHERE e.group_id=? AND e.id=? AND e.deleted_at IS NULL`, groupID, id)
 	if err != nil {
@@ -365,7 +402,7 @@ func Expenses(ctx context.Context, q Q, groupID string) ([]ledger.Expense, error
 }
 
 func queryExpenses(ctx context.Context, q Q, where string, args ...any) ([]ledger.Expense, error) {
-	rows, err := q.QueryContext(ctx, `SELECT e.id,e.group_id,e.description,e.amount,e.date,e.split_type,e.notes,e.created_by,e.created_at,e.updated_at
+	rows, err := q.QueryContext(ctx, `SELECT e.id,e.group_id,e.description,e.amount,e.date,e.split_type,e.category,e.notes,e.created_by,e.created_at,e.updated_at,COALESCE(e.deleted_at,'')
 		FROM expenses e `+where+` ORDER BY e.date DESC, e.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
@@ -374,7 +411,7 @@ func queryExpenses(ctx context.Context, q Q, where string, args ...any) ([]ledge
 	idx := map[string]int{}
 	for rows.Next() {
 		var e ledger.Expense
-		if err := rows.Scan(&e.ID, &e.GroupID, &e.Description, &e.Amount, &e.Date, &e.SplitType, &e.Notes, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.GroupID, &e.Description, &e.Amount, &e.Date, &e.SplitType, &e.Category, &e.Notes, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt, &e.DeletedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -442,6 +479,38 @@ func GetPayment(ctx context.Context, q Q, groupID, id string) (ledger.Payment, e
 	return p, err
 }
 
+func GetDeletedPayment(ctx context.Context, q Q, groupID, id string) (ledger.Payment, error) {
+	var p ledger.Payment
+	err := q.QueryRowContext(ctx, `SELECT id,group_id,from_user_id,to_user_id,amount,date,notes,created_by,created_at,deleted_at FROM payments WHERE group_id=? AND id=? AND deleted_at IS NOT NULL`, groupID, id).
+		Scan(&p.ID, &p.GroupID, &p.FromUserID, &p.ToUserID, &p.Amount, &p.Date, &p.Notes, &p.CreatedBy, &p.CreatedAt, &p.DeletedAt)
+	if noRows(err) {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+func RestorePayment(ctx context.Context, q Q, id string) error {
+	_, err := q.ExecContext(ctx, `UPDATE payments SET deleted_at=NULL WHERE id=?`, id)
+	return err
+}
+
+func DeletedPayments(ctx context.Context, q Q, groupID string, limit int) ([]ledger.Payment, error) {
+	rows, err := q.QueryContext(ctx, `SELECT id,group_id,from_user_id,to_user_id,amount,date,notes,created_by,created_at,deleted_at FROM payments WHERE group_id=? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ?`, groupID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ledger.Payment{}
+	for rows.Next() {
+		var p ledger.Payment
+		if err := rows.Scan(&p.ID, &p.GroupID, &p.FromUserID, &p.ToUserID, &p.Amount, &p.Date, &p.Notes, &p.CreatedBy, &p.CreatedAt, &p.DeletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func SoftDeletePayment(ctx context.Context, q Q, id string) error {
 	_, err := q.ExecContext(ctx, `UPDATE payments SET deleted_at=? WHERE id=? AND deleted_at IS NULL`, db.Now(), id)
 	return err
@@ -469,6 +538,10 @@ func Payments(ctx context.Context, q Q, groupID string) ([]ledger.Payment, error
 // AppendEvent bumps the group's sequence and inserts the event. Must run in
 // the same transaction as the state change it describes.
 func AppendEvent(ctx context.Context, q Q, groupID, typ string, actor ledger.User, payload any) (ledger.Event, error) {
+	return AppendEventIP(ctx, q, groupID, typ, actor, payload, IPFrom(ctx))
+}
+
+func AppendEventIP(ctx context.Context, q Q, groupID, typ string, actor ledger.User, payload any, ip string) (ledger.Event, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return ledger.Event{}, err
@@ -478,8 +551,8 @@ func AppendEvent(ctx context.Context, q Q, groupID, typ string, actor ledger.Use
 		return ledger.Event{}, err
 	}
 	ev := ledger.Event{GroupID: groupID, Seq: seq, Type: typ, ActorID: actor.ID, ActorName: actor.Name, Payload: payload, CreatedAt: db.Now()}
-	if err := q.QueryRowContext(ctx, `INSERT INTO events(group_id,seq,type,actor_id,payload,created_at) VALUES(?,?,?,?,?,?) RETURNING id`,
-		ev.GroupID, ev.Seq, ev.Type, ev.ActorID, string(raw), ev.CreatedAt).Scan(&ev.ID); err != nil {
+	if err := q.QueryRowContext(ctx, `INSERT INTO events(group_id,seq,type,actor_id,payload,created_at,ip) VALUES(?,?,?,?,?,?,?) RETURNING id`,
+		ev.GroupID, ev.Seq, ev.Type, ev.ActorID, string(raw), ev.CreatedAt, ip).Scan(&ev.ID); err != nil {
 		return ledger.Event{}, err
 	}
 	return ev, nil

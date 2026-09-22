@@ -1,0 +1,26 @@
+{{template "head" .}}{{template "nav" .}}
+<h1>Overview</h1>
+<div class="cards">
+<div class="card"><div class="n">{{.Overview.Users}}</div><div class="l">users</div></div>
+<div class="card"><div class="n">{{.Overview.Active24h}}</div><div class="l">active in 24h</div></div>
+<div class="card"><div class="n">{{.Overview.Groups}}</div><div class="l">groups</div></div>
+<div class="card"><div class="n">{{.Overview.Expenses}}</div><div class="l">expenses</div></div>
+<div class="card"><div class="n">{{.Overview.Payments}}</div><div class="l">payments</div></div>
+<div class="card"><div class="n">{{.Overview.ActiveSessions}}</div><div class="l">live sessions</div></div>
+<div class="card"><div class="n">{{.Overview.PushSubs}}</div><div class="l">push devices</div></div>
+</div>
+
+<h2>Recent activity</h2>
+<div class="wrap"><table><tr><th>When</th><th>Who</th><th>What</th><th>Group</th><th>IP</th></tr>
+{{range .Events}}<tr><td class="muted" title="{{when .CreatedAt}}">{{ago .CreatedAt}}</td>
+<td><a href="/admin/users/{{.ActorID}}">{{.ActorName}}</a></td><td>{{describe .}}</td><td>{{.GroupName}}</td><td class="mono">{{.IP}}</td></tr>
+{{else}}<tr><td colspan="5" class="muted">Nothing yet.</td></tr>{{end}}</table></div>
+
+<h2>Auth and admin log</h2>
+<div class="wrap"><table><tr><th>When</th><th>Who</th><th>Event</th><th>Device</th><th>IP</th></tr>
+{{range .Audit}}<tr><td class="muted" title="{{when .CreatedAt}}">{{ago .CreatedAt}}</td>
+<td>{{if .UserID}}<a href="/admin/users/{{.UserID}}">{{.UserName}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
+<td><span class="pill {{if eq .Kind "admin.login" "admin.login_failed" "admin.session_revoked"}}admin{{else}}auth{{end}}">{{.Kind}}</span> {{.Detail}}</td>
+<td class="muted">{{device .UserAgent}}</td><td class="mono">{{.IP}}</td></tr>
+{{else}}<tr><td colspan="5" class="muted">Nothing yet.</td></tr>{{end}}</table></div>
+{{template "foot" .}}

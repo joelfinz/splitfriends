@@ -1,0 +1,12 @@
+{{template "head" .}}{{template "nav" .}}
+<h1>Users</h1>
+<div class="wrap"><table>
+<tr><th>Name</th><th>Joined</th><th class="num">Passkeys</th><th class="num">Groups</th><th class="num">Sessions</th><th>Last seen</th><th>Last IP</th><th class="num">Actions (30d)</th></tr>
+{{range .Users}}<tr>
+<td><a href="/admin/users/{{.ID}}">{{.Name}}</a><div class="mono muted">{{.ID}}</div></td>
+<td class="muted" title="{{when .CreatedAt}}">{{ago .CreatedAt}}</td>
+<td class="num">{{.Passkeys}}</td><td class="num">{{.Groups}}</td><td class="num">{{.Sessions}}</td>
+<td title="{{when .LastSeenAt}}">{{ago .LastSeenAt}}</td><td class="mono">{{.LastIP}}</td><td class="num">{{.Actions30d}}</td>
+</tr>{{else}}<tr><td colspan="8" class="muted">No users yet.</td></tr>{{end}}
+</table></div>
+{{template "foot" .}}

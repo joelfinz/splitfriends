@@ -18,6 +18,8 @@ services:
       RP_ID: ${RP_ID:-localhost}
       ORIGIN: ${ORIGIN:-http://localhost:8080}
       PUSH_CONTACT: ${PUSH_CONTACT:-mailto:admin@example.com}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     volumes:
       - splitfriends-data:/data
     logging:

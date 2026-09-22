@@ -3,8 +3,9 @@
   import { fmt, splitByWeights, splitEqual, step, toMajor, toMinor } from '../lib/money';
   import { navigate } from '../lib/router.svelte';
   import { loadGroup, memberName, store } from '../lib/store.svelte';
-  import { errorToast, toast } from '../lib/toast.svelte';
-  import type { ExpenseInput, SplitType } from '../lib/types';
+  import { actionToast, errorToast } from '../lib/toast.svelte';
+  import { CATEGORIES, normalizeCategory, suggestCategory } from '../lib/categories';
+  import type { Category, Expense, ExpenseInput, SplitType } from '../lib/types';
   import Shell from '../components/Shell.svelte';
   import Spinner from '../components/Spinner.svelte';
   import Avatar from '../components/Avatar.svelte';
@@ -24,6 +25,8 @@
   let amountStr = $state('');
   let date = $state(new Date().toISOString().slice(0, 10));
   let notes = $state('');
+  let category = $state<Category>('other');
+  let categoryManual = $state(false); // once the user taps a chip we stop suggesting
   let multiPayer = $state(false);
   let singlePayer = $state('');
   let payerAmounts = $state<Record<string, string>>({});
@@ -47,6 +50,8 @@
       amountStr = toMajor(existing.amount, currency);
       date = existing.date;
       notes = existing.notes ?? '';
+      category = normalizeCategory(existing.category);
+      categoryManual = true;
       splitType = existing.split_type;
       multiPayer = existing.payers.length > 1;
       singlePayer = existing.payers[0]?.user_id ?? myId;
@@ -71,6 +76,31 @@
     }
     initialised = true;
   });
+
+  // Suggest a category from the description until the user picks one by hand.
+  $effect(() => {
+    if (categoryManual) return;
+    const d = description;
+    category = suggestCategory(d) ?? 'other';
+  });
+  function pickCategory(c: Category) {
+    category = c;
+    categoryManual = true;
+  }
+
+  /** Rebuild the input the server would accept from a stored expense (for "Revert"). */
+  function inputFrom(e: Expense): ExpenseInput {
+    return {
+      description: e.description,
+      amount: e.amount,
+      date: e.date,
+      notes: e.notes ?? '',
+      payers: e.payers.map((p) => ({ user_id: p.user_id, amount: p.amount })),
+      split_type: e.split_type,
+      category: normalizeCategory(e.category),
+      shares: e.shares.map((sh) => ({ user_id: sh.user_id, value: sh.value })),
+    };
+  }
 
   // ---- derived math
   const amount = $derived(toMinor(amountStr, currency));
@@ -177,13 +207,27 @@
       notes: notes.trim(),
       payers,
       split_type: splitType,
+      category,
       shares: preview.map((p) => ({ user_id: p.user_id, value: p.value })),
     };
     busy = true;
     try {
-      if (expenseId) await api.updateExpense(groupId, expenseId, body);
-      else await api.createExpense(groupId, body);
-      toast(expenseId ? 'Expense updated' : 'Expense added', 'success');
+      const label = body.description.length > 28 ? body.description.slice(0, 27) + '…' : body.description;
+      if (expenseId && existing) {
+        const previous = inputFrom(existing);
+        const eid = expenseId;
+        await api.updateExpense(groupId, eid, body);
+        actionToast(`Saved "${label}"`, 'Revert', async () => {
+          await api.updateExpense(groupId, eid, previous);
+          await loadGroup(groupId);
+        });
+      } else {
+        const created = await api.createExpense(groupId, body);
+        actionToast(`Added "${label}"`, 'Undo', async () => {
+          await api.deleteExpense(groupId, created.id);
+          await loadGroup(groupId);
+        });
+      }
       await loadGroup(groupId);
       navigate(`/groups/${groupId}`, { replace: true });
     } catch (e) {
@@ -196,8 +240,13 @@
     if (!expenseId || !confirm('Delete this expense?')) return;
     busy = true;
     try {
-      await api.deleteExpense(groupId, expenseId);
-      toast('Expense deleted', 'success');
+      const eid = expenseId;
+      const label = existing?.description ?? 'expense';
+      await api.deleteExpense(groupId, eid);
+      actionToast(`Deleted "${label}"`, 'Undo', async () => {
+        await api.restoreExpense(groupId, eid);
+        await loadGroup(groupId);
+      });
       await loadGroup(groupId);
       navigate(`/groups/${groupId}`, { replace: true });
     } catch (e) {
@@ -240,6 +289,23 @@
               <input class="input input-lg w-full" type="date" bind:value={date} required />
             </fieldset>
           </div>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Category{!categoryManual && category !== 'other' ? ' · suggested' : ''}</legend>
+            <div class="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label="Category">
+              {#each CATEGORIES as c (c.id)}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={category === c.id}
+                  class="btn btn-xs shrink-0 {category === c.id ? 'btn-neutral' : 'btn-soft'}"
+                  onclick={() => pickCategory(c.id)}
+                >
+                  <span aria-hidden="true">{c.emoji}</span>
+                  {c.label}
+                </button>
+              {/each}
+            </div>
+          </fieldset>
         </div>
       </div>
 

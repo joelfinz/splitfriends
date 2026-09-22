@@ -1,0 +1,34 @@
+{{define "head"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>{{.AppName}} admin</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#111827;--muted:#6b7280;--card:#fff;--line:#e5e7eb;--acc:#059669;--warn:#b45309;--danger:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e5e7eb;--muted:#9ca3af;--card:#171a21;--line:#2a2f3a;--acc:#34d399;--warn:#f59e0b;--danger:#f87171}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+nav{display:flex;gap:18px;align-items:center;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--line)}
+nav b{margin-right:auto}nav form{margin:0}
+main{max-width:1100px;margin:0 auto;padding:20px}
+h1{font-size:20px;margin:0 0 16px}h2{font-size:15px;margin:24px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card .n{font-size:26px;font-weight:600}.card .l{color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500;font-size:12px}
+tr:last-child td{border-bottom:0}td.num{text-align:right;font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--muted)}
+.pill.auth{border-color:var(--acc);color:var(--acc)}.pill.admin{border-color:var(--warn);color:var(--warn)}
+button,input{font:inherit}button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+button.danger{background:transparent;color:var(--danger);border:1px solid var(--danger);padding:4px 10px;font-size:12px}
+input[type=password]{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+.login{max-width:340px;margin:12vh auto}.err{color:var(--danger);margin:8px 0}.flash{background:var(--card);border:1px solid var(--acc);border-radius:8px;padding:8px 12px;margin-bottom:12px}
+.wrap{overflow-x:auto}
+</style></head><body>{{end}}
+
+{{define "nav"}}<nav><b>{{.AppName}} admin</b>
+<a href="/admin" {{if eq .Page "overview"}}style="font-weight:600"{{end}}>Overview</a>
+<a href="/admin/users" {{if eq .Page "users"}}style="font-weight:600"{{end}}>Users</a>
+<form method="post" action="/admin/logout"><button type="submit" style="background:transparent;color:var(--muted);padding:0">Log out</button></form></nav><main>{{end}}
+
+{{define "foot"}}</main></body></html>{{end}}

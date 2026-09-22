@@ -1,0 +1,30 @@
+{{template "head" .}}{{template "nav" .}}
+<p><a href="/admin/users">← Users</a></p>
+<h1>{{.User.Name}} <span class="mono muted" style="font-weight:400">{{.User.ID}}</span></h1>
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+<p class="muted">Joined {{when .User.CreatedAt}} · {{len .Passkeys}} passkey(s) · {{len .Groups}} group(s)</p>
+
+<h2>Sessions</h2>
+<div class="wrap"><table><tr><th>Device</th><th>IP</th><th>Last seen</th><th>Signed in</th><th>Expires</th><th></th></tr>
+{{$uid := .User.ID}}{{range .Sessions}}<tr>
+<td>{{device .UserAgent}}<div class="muted mono" style="max-width:420px;white-space:normal">{{.UserAgent}}</div></td>
+<td class="mono">{{.IP}}</td><td title="{{when .LastSeenAt}}">{{ago .LastSeenAt}}</td><td class="muted">{{when .CreatedAt}}</td><td class="muted">{{when .ExpiresAt}}</td>
+<td><form method="post" action="/admin/users/{{$uid}}/sessions/{{.ID}}/revoke" onsubmit="return confirm('Sign this device out?')"><button class="danger" type="submit">Revoke</button></form></td>
+</tr>{{else}}<tr><td colspan="6" class="muted">No active sessions.</td></tr>{{end}}</table></div>
+
+<h2>Passkeys</h2>
+<div class="wrap"><table><tr><th>Name</th><th>Added</th><th>Last used</th></tr>
+{{range .Passkeys}}<tr><td>{{.Name}}</td><td class="muted">{{when .CreatedAt}}</td><td>{{ago .LastUsedAt}}</td></tr>{{end}}</table></div>
+
+<h2>Groups</h2>
+<div class="wrap"><table><tr><th>Name</th><th>Currency</th><th class="num">Members</th><th class="num">Events</th><th>Created</th></tr>
+{{range .Groups}}<tr><td>{{.Name}}</td><td>{{.Currency}}</td><td class="num">{{.MemberCount}}</td><td class="num">{{.LastSeq}}</td><td class="muted">{{when .CreatedAt}}</td></tr>
+{{else}}<tr><td colspan="5" class="muted">Not in any group.</td></tr>{{end}}</table></div>
+
+<h2>Timeline</h2>
+<div class="wrap"><table><tr><th>When</th><th>Event</th><th>Group</th><th>Device</th><th>IP</th></tr>
+{{range .Timeline}}<tr><td class="muted" title="{{when .At}}">{{when .At}}</td>
+<td><span class="pill {{if or (eq .Kind "auth.login") (eq .Kind "auth.register") (eq .Kind "auth.logout") (eq .Kind "passkey.added") (eq .Kind "passkey.removed")}}auth{{else if eq .Kind "admin.session_revoked"}}admin{{end}}">{{.Kind}}</span> {{.Text}}</td>
+<td>{{.Group}}</td><td class="muted">{{.Device}}</td><td class="mono">{{.IP}}</td></tr>
+{{else}}<tr><td colspan="5" class="muted">No activity.</td></tr>{{end}}</table></div>
+{{template "foot" .}}

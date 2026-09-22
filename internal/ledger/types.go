@@ -58,12 +58,14 @@ type Expense struct {
 	Amount      int64     `json:"amount"`
 	Date        string    `json:"date"`
 	SplitType   SplitType `json:"split_type"`
+	Category    Category  `json:"category"`
 	Notes       string    `json:"notes"`
 	Payers      []Payer   `json:"payers"`
 	Shares      []Share   `json:"shares"`
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   string    `json:"created_at"`
 	UpdatedAt   string    `json:"updated_at"`
+	DeletedAt   string    `json:"deleted_at,omitempty"`
 }
 
 type Payment struct {
@@ -76,6 +78,7 @@ type Payment struct {
 	Notes      string `json:"notes"`
 	CreatedBy  string `json:"created_by"`
 	CreatedAt  string `json:"created_at"`
+	DeletedAt  string `json:"deleted_at,omitempty"`
 }
 
 type Balance struct {
@@ -96,7 +99,25 @@ type ExpenseInput struct {
 	Notes       string       `json:"notes"`
 	Payers      []Payer      `json:"payers"`
 	SplitType   SplitType    `json:"split_type"`
+	Category    Category     `json:"category"`
 	Shares      []ShareInput `json:"shares"`
+}
+
+// Category is a fixed vocabulary so charts stay comparable across groups.
+type Category string
+
+var Categories = []Category{"food", "groceries", "drinks", "transport", "accommodation", "entertainment",
+	"shopping", "utilities", "health", "travel", "gifts", "other"}
+
+const CategoryOther Category = "other"
+
+func ValidCategory(c Category) bool {
+	for _, k := range Categories {
+		if k == c {
+			return true
+		}
+	}
+	return false
 }
 
 // Event is one entry in a group's append-only log. ID is global and
@@ -113,13 +134,15 @@ type Event struct {
 }
 
 const (
-	EvGroupCreated   = "group.created"
-	EvGroupUpdated   = "group.updated"
-	EvMemberJoined   = "member.joined"
-	EvMemberLeft     = "member.left"
-	EvExpenseCreated = "expense.created"
-	EvExpenseUpdated = "expense.updated"
-	EvExpenseDeleted = "expense.deleted"
-	EvPaymentCreated = "payment.created"
-	EvPaymentDeleted = "payment.deleted"
+	EvGroupCreated    = "group.created"
+	EvGroupUpdated    = "group.updated"
+	EvMemberJoined    = "member.joined"
+	EvMemberLeft      = "member.left"
+	EvExpenseCreated  = "expense.created"
+	EvExpenseUpdated  = "expense.updated"
+	EvExpenseDeleted  = "expense.deleted"
+	EvPaymentCreated  = "payment.created"
+	EvPaymentDeleted  = "payment.deleted"
+	EvExpenseRestored = "expense.restored"
+	EvPaymentRestored = "payment.restored"
 )

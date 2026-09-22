@@ -75,11 +75,14 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/leave", s.leaveGroup)
 			r.Post("/invites", s.createInvite)
 			r.Get("/events", s.groupEvents)
+			r.Get("/trash", s.trash)
 			r.Post("/expenses", s.createExpense)
 			r.Patch("/expenses/{eid}", s.updateExpense)
 			r.Delete("/expenses/{eid}", s.deleteExpense)
+			r.Post("/expenses/{eid}/restore", s.restoreExpense)
 			r.Post("/payments", s.createPayment)
 			r.Delete("/payments/{pid}", s.deletePayment)
+			r.Post("/payments/{pid}/restore", s.restorePayment)
 		})
 	})
 	return r
@@ -199,6 +202,8 @@ func handleErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, 400, "not_member", "everyone on the expense must be a group member")
 	case errInvalidDate:
 		httpx.Error(w, 400, "invalid_date", "date must be YYYY-MM-DD")
+	case errInvalidCategory:
+		httpx.Error(w, 400, "invalid_category", "unknown category")
 	default:
 		httpx.Internal(w, err)
 	}

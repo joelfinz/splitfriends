@@ -293,7 +293,8 @@ export function applyEvent(ev: GroupEvent): void {
       break;
     }
     case 'expense.created':
-    case 'expense.updated': {
+    case 'expense.updated':
+    case 'expense.restored': {
       const e = ev.payload?.expense as Expense | undefined;
       if (d && e) {
         d.expenses = [e, ...d.expenses.filter((x) => x.id !== e.id)];
@@ -309,7 +310,8 @@ export function applyEvent(ev: GroupEvent): void {
       } else scheduleRefetch(gid);
       break;
     }
-    case 'payment.created': {
+    case 'payment.created':
+    case 'payment.restored': {
       const p = ev.payload?.payment as Payment | undefined;
       if (d && p) {
         d.payments = [p, ...d.payments.filter((x) => x.id !== p.id)];
@@ -357,10 +359,14 @@ export function describeEvent(ev: GroupEvent, g?: Group): string {
       return `${who} edited "${p.expense?.description ?? 'an expense'}"${where}`;
     case 'expense.deleted':
       return `${who} deleted "${p.description ?? 'an expense'}"${where}`;
+    case 'expense.restored':
+      return `${who} restored "${p.expense?.description ?? 'an expense'}"${where}`;
     case 'payment.created':
       return `${who} recorded a payment${where}`;
     case 'payment.deleted':
       return `${who} deleted a payment${where}`;
+    case 'payment.restored':
+      return `${who} restored a payment${where}`;
     default:
       return `${who} did something${where}`;
   }

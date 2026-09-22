@@ -149,3 +149,34 @@ Push is sent to every member of the group except the actor, only if that member 
 
 - Go server listens on `:8080` (env `ADDR`). `RP_ID=localhost`, `ORIGIN=http://localhost:5173` in dev so passkeys work through the Vite dev server.
 - Vite dev server on `:5173` proxies `/api` to `http://localhost:8080` (SSE needs `proxy: { '/api': { target, changeOrigin: true } }`, no buffering issues with Vite).
+
+---
+
+## v2 additions: categories, restore, trash
+
+### Categories
+
+`Expense` and `ExpenseInput` gain `category: Category`. Fixed set, validated by the server (400 `invalid_category` otherwise). Missing on input = `other`.
+
+```ts
+type Category = 'food' | 'groceries' | 'drinks' | 'transport' | 'accommodation' | 'entertainment'
+              | 'shopping' | 'utilities' | 'health' | 'travel' | 'gifts' | 'other'
+```
+
+Payments have no category.
+
+### Restore and trash
+
+| Method | Path | Response |
+|---|---|---|
+| POST | `/api/groups/{id}/expenses/{eid}/restore` | `Expense` (200). 404 if not deleted / unknown. 400 `not_member` if a payer or participant has left the group. |
+| POST | `/api/groups/{id}/payments/{pid}/restore` | `Payment` (200). Same errors. |
+| GET | `/api/groups/{id}/trash` | `{ expenses: (Expense & {deleted_at: string})[], payments: (Payment & {deleted_at: string})[] }`, newest deletion first, max 50 each |
+
+New event types, payload identical to the matching `*.created` event:
+- `expense.restored`: `{ expense: Expense }`
+- `payment.restored`: `{ payment: Payment }`
+
+Clients apply them exactly like `expense.created` / `payment.created` (upsert).
+
+`Expense` and `Payment` objects may carry `deleted_at?: string` only in the trash listing; everywhere else they are absent (live items only).

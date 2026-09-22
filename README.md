@@ -9,6 +9,9 @@ A self-hosted, Splitwise-style shared-expense tracker for friends, trips and fla
 - **Splits that add up.** Equal, exact, percentage and share-based splits, multiple payers, largest-remainder rounding so shares always sum to the total.
 - **Balances, pairwise debts and simplified debts** derived from an append-only event log per group.
 - **Offline-friendly.** Installable PWA with a cached shell and an IndexedDB snapshot for instant loads.
+- **Categories and stats.** Fixed category set with keyword suggestions, plus per-group charts: spend by category, over time, and paid vs share per member.
+- **Undo and restore.** Every action offers an undo toast; deleted expenses and payments sit in a per-group trash until restored.
+- **Optional admin dashboard** at `/admin`, server-rendered and separate from the app: users, sessions with IP and device, activity timelines, session revocation. Enabled only when `ADMIN_PASSWORD` is set.
 
 ## Layout
 
@@ -22,6 +25,8 @@ internal/auth      passkeys (WebAuthn) + cookie sessions
 internal/realtime  in-memory SSE hub, fan-out by user id
 internal/push      VAPID key management + Web Push sending
 internal/api       chi routes and handlers
+internal/admin     server-rendered admin dashboard (html/template)
+internal/clientip  client IP resolution behind proxies
 web/               Svelte 5 + Tailwind 4 + daisyUI 5 SPA, service worker, manifest
 docs/API.md        the frontend/backend contract
 ```
@@ -77,6 +82,8 @@ docker run --rm -v splitfriends_splitfriends-data:/data -v "$PWD":/out alpine \
 | `APP_NAME` | `Fairshare` | shown in passkey prompts |
 | `PUSH_CONTACT` | `mailto:admin@example.com` | VAPID subscriber contact |
 | `DEV` | unset | request logging when set |
+| `ADMIN_PASSWORD` | unset | enables `/admin`; unset means the path does not exist |
+| `TRUST_PROXY_HEADERS` | unset | set to `1` behind a proxy or tunnel so client IPs come from `CF-Connecting-IP` / `X-Forwarded-For` |
 
 ## Notes
 
@@ -84,6 +91,7 @@ docker run --rm -v splitfriends_splitfriends-data:/data -v "$PWD":/out alpine \
 - Many proxies close idle streams after a minute or two; the server sends an SSE comment every 25 s to keep connections alive.
 - Leaving a group requires a zero balance.
 - Backups are not built in; snapshot the volume as shown above.
+- The admin dashboard records client IPs per session and per action. Auth audit rows are purged after 90 days; tell your users if you enable it.
 
 ## License
 

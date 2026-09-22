@@ -127,6 +127,29 @@ CREATE TABLE settings (
   value  TEXT NOT NULL
 );
 `,
+	// v2: categories, request IPs, audit log.
+	`
+ALTER TABLE expenses ADD COLUMN category TEXT NOT NULL DEFAULT 'other';
+ALTER TABLE sessions ADD COLUMN ip TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN ip TEXT NOT NULL DEFAULT '';
+CREATE INDEX events_actor ON events(actor_id, id);
+CREATE INDEX expenses_deleted ON expenses(group_id, deleted_at);
+CREATE INDEX payments_deleted ON payments(group_id, deleted_at);
+
+CREATE TABLE audit_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     TEXT,                 -- NULL for anonymous (failed admin login)
+  kind        TEXT NOT NULL,        -- auth.register, auth.login, auth.logout, passkey.added, passkey.removed, admin.login, admin.login_failed, admin.session_revoked
+  detail      TEXT NOT NULL DEFAULT '',
+  ip          TEXT NOT NULL DEFAULT '',
+  user_agent  TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX audit_user ON audit_log(user_id, id);
+CREATE INDEX audit_created ON audit_log(created_at);
+`,
 }
 
 func (d *DB) migrate(ctx context.Context) error {

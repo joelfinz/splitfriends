@@ -9,6 +9,7 @@ import type {
   Passkey,
   Payment,
   PaymentInput,
+  Trash,
   User,
 } from './types';
 
@@ -58,6 +59,7 @@ function humanize(code: string, status: number): string {
     invalid_date: 'The date is not valid.',
     nonzero_balance: 'Settle your balance before leaving the group.',
     last_passkey: 'You cannot remove your only passkey.',
+    invalid_category: 'That category is not valid.',
   };
   return known[code] ?? (status >= 500 ? 'Something went wrong on the server.' : `Request failed (${code}).`);
 }
@@ -102,6 +104,11 @@ export const createPayment = (gid: string, body: PaymentInput) =>
   post<Payment>(`/api/groups/${encodeURIComponent(gid)}/payments`, body);
 export const deletePayment = (gid: string, pid: string) =>
   del<void>(`/api/groups/${encodeURIComponent(gid)}/payments/${encodeURIComponent(pid)}`);
+export const restoreExpense = (gid: string, eid: string) =>
+  post<Expense>(`/api/groups/${encodeURIComponent(gid)}/expenses/${encodeURIComponent(eid)}/restore`);
+export const restorePayment = (gid: string, pid: string) =>
+  post<Payment>(`/api/groups/${encodeURIComponent(gid)}/payments/${encodeURIComponent(pid)}/restore`);
+export const getTrash = (gid: string) => get<Trash>(`/api/groups/${encodeURIComponent(gid)}/trash`);
 
 // ---- events
 export const groupEvents = (gid: string, since: number, limit = 200) =>

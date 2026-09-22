@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	errNotMember   = errors.New("not_member")
-	errInvalidDate = errors.New("invalid_date")
+	errNotMember       = errors.New("not_member")
+	errInvalidDate     = errors.New("invalid_date")
+	errInvalidCategory = errors.New("invalid_category")
 )
 
 func validDate(d string) bool {
@@ -38,6 +39,12 @@ func buildExpense(g ledger.Group, in ledger.ExpenseInput) (ledger.Expense, error
 	}
 	if in.Amount <= 0 {
 		return ledger.Expense{}, ledger.ErrInvalidAmount
+	}
+	if in.Category == "" {
+		in.Category = ledger.CategoryOther
+	}
+	if !ledger.ValidCategory(in.Category) {
+		return ledger.Expense{}, errInvalidCategory
 	}
 	if err := ledger.ValidatePayers(in.Amount, in.Payers); err != nil {
 		return ledger.Expense{}, err
@@ -62,8 +69,107 @@ func buildExpense(g ledger.Group, in ledger.ExpenseInput) (ledger.Expense, error
 	}
 	return ledger.Expense{
 		GroupID: g.ID, Description: in.Description, Amount: in.Amount, Date: in.Date,
-		SplitType: in.SplitType, Notes: strings.TrimSpace(in.Notes), Payers: in.Payers, Shares: shares,
+		SplitType: in.SplitType, Category: in.Category, Notes: strings.TrimSpace(in.Notes), Payers: in.Payers, Shares: shares,
 	}, nil
+}
+
+// membersOK reports whether every payer and participant is still a member.
+func membersOK(g ledger.Group, e ledger.Expense) bool {
+	m := map[string]bool{}
+	for _, x := range g.Members {
+		m[x.UserID] = true
+	}
+	for _, p := range e.Payers {
+		if !m[p.UserID] {
+			return false
+		}
+	}
+	for _, s := range e.Shares {
+		if !m[s.UserID] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) restoreExpense(w http.ResponseWriter, r *http.Request) {
+	u, _ := auth.UserFrom(r.Context())
+	g := groupFrom(r.Context())
+	e, err := store.GetDeletedExpense(r.Context(), s.db, g.ID, chi.URLParam(r, "eid"))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	if !membersOK(g, e) {
+		handleErr(w, errNotMember)
+		return
+	}
+	e.DeletedAt = ""
+	e.UpdatedAt = db.Now()
+	_, err = s.commit(r.Context(), g.ID, u, func(tx *sql.Tx) (ledger.Event, push.Payload, error) {
+		if err := store.RestoreExpense(r.Context(), tx, e.ID); err != nil {
+			return ledger.Event{}, push.Payload{}, err
+		}
+		ev, err := store.AppendEvent(r.Context(), tx, g.ID, ledger.EvExpenseRestored, u, map[string]any{"expense": e})
+		return ev, expensePush(g, u, "restored", e), err
+	})
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	httpx.JSON(w, 200, e)
+}
+
+func (s *Server) restorePayment(w http.ResponseWriter, r *http.Request) {
+	u, _ := auth.UserFrom(r.Context())
+	g := groupFrom(r.Context())
+	p, err := store.GetDeletedPayment(r.Context(), s.db, g.ID, chi.URLParam(r, "pid"))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	members := map[string]string{}
+	for _, m := range g.Members {
+		members[m.UserID] = m.Name
+	}
+	if _, ok := members[p.FromUserID]; !ok {
+		handleErr(w, errNotMember)
+		return
+	}
+	if _, ok := members[p.ToUserID]; !ok {
+		handleErr(w, errNotMember)
+		return
+	}
+	p.DeletedAt = ""
+	_, err = s.commit(r.Context(), g.ID, u, func(tx *sql.Tx) (ledger.Event, push.Payload, error) {
+		if err := store.RestorePayment(r.Context(), tx, p.ID); err != nil {
+			return ledger.Event{}, push.Payload{}, err
+		}
+		ev, err := store.AppendEvent(r.Context(), tx, g.ID, ledger.EvPaymentRestored, u, map[string]any{"payment": p})
+		pl := push.Payload{Title: g.Name, Tag: "payment-" + p.ID, URL: "/groups/" + g.ID,
+			Body: u.Name + " restored a payment: " + members[p.FromUserID] + " paid " + members[p.ToUserID] + " " + money(g.Currency, p.Amount)}
+		return ev, pl, err
+	})
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+	httpx.JSON(w, 200, p)
+}
+
+func (s *Server) trash(w http.ResponseWriter, r *http.Request) {
+	g := groupFrom(r.Context())
+	exps, err := store.DeletedExpenses(r.Context(), s.db, g.ID, 50)
+	if err != nil {
+		httpx.Internal(w, err)
+		return
+	}
+	pays, err := store.DeletedPayments(r.Context(), s.db, g.ID, 50)
+	if err != nil {
+		httpx.Internal(w, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]any{"expenses": exps, "payments": pays})
 }
 
 // expensePush describes the expense from the recipient's point of view is

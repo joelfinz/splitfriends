@@ -17,8 +17,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"splitfriends/internal/admin"
 	"splitfriends/internal/api"
 	"splitfriends/internal/auth"
+	"splitfriends/internal/clientip"
 	"splitfriends/internal/config"
 	"splitfriends/internal/db"
 	"splitfriends/internal/push"
@@ -55,12 +57,18 @@ func main() {
 	srv := api.New(cfg, d, a, hub, p)
 
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP, middleware.Recoverer)
+	r.Use(clientip.Middleware(cfg.TrustProxyHeaders), middleware.Recoverer)
 	if cfg.Dev {
 		r.Use(middleware.Logger)
 	}
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	r.Mount("/api", srv.Routes())
+	// The admin dashboard only exists when ADMIN_PASSWORD is set; otherwise
+	// /admin falls through to the SPA like any unknown path.
+	if adm := admin.New(cfg, d); adm != nil {
+		r.Mount("/admin", adm.Routes())
+		slog.Info("admin dashboard enabled")
+	}
 	r.NotFound(spaHandler())
 
 	httpSrv := &http.Server{
