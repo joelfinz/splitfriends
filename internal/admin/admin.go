@@ -105,7 +105,9 @@ func (h *Handler) Routes() http.Handler {
 			hd.Set("X-Robots-Tag", "noindex, nofollow")
 			hd.Set("Cache-Control", "no-store")
 			hd.Set("X-Frame-Options", "DENY")
-			hd.Set("Referrer-Policy", "no-referrer")
+			// same-origin (not no-referrer): with no-referrer browsers send
+			// "Origin: null" on form posts, which would defeat the CSRF check.
+			hd.Set("Referrer-Policy", "same-origin")
 			hd.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
 			next.ServeHTTP(w, r)
 		})
@@ -144,11 +146,11 @@ func (h *Handler) sameOrigin(r *http.Request) bool {
 	if src == "" {
 		src = r.Header.Get("Referer")
 	}
-	if src == "" {
+	if src == "" || src == "null" {
 		return false
 	}
 	u, err := url.Parse(src)
-	if err != nil {
+	if err != nil || u.Host == "" {
 		return false
 	}
 	for _, o := range h.cfg.Origins {
@@ -161,7 +163,7 @@ func (h *Handler) sameOrigin(r *http.Request) bool {
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if !h.sameOrigin(r) {
-		http.Error(w, "bad origin", http.StatusForbidden)
+		h.render(w, "login.html", map[string]any{"Error": "Request rejected: origin check failed. Reload the page and try again."}, http.StatusForbidden)
 		return
 	}
 	ip := store.IPFrom(r.Context())
@@ -324,7 +326,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.sameOrigin(r) {
-		http.Error(w, "bad origin", http.StatusForbidden)
+		http.Redirect(w, r, "/admin/users/"+url.PathEscape(chi.URLParam(r, "id"))+"?flash=Request+rejected+by+origin+check", http.StatusSeeOther)
 		return
 	}
 	uid, sid := chi.URLParam(r, "id"), chi.URLParam(r, "sid")
